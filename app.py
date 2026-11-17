@@ -26,7 +26,7 @@ class Cursor:
  def fetchone(self):
   r=self.cursor.fetchone();return Row(r) if r is not None else None
  def fetchall(self):return [Row(r) for r in self.cursor.fetchall()]
-class DB:
+class Database:
  def __init__(self):self.c=psycopg.connect(DB,row_factory=dict_row)
  def __enter__(self):self.c.__enter__();return self
  def __exit__(self,*a):return self.c.__exit__(*a)
@@ -37,7 +37,7 @@ class DB:
    return Cursor(self.c.execute('SELECT 1'))
   return Cursor(self.c.execute(sql,params))
  def commit(self):self.c.commit()
-def db():return DB()
+def db():return Database()
 def init():
  with db() as c:
   c.execute("""CREATE TABLE IF NOT EXISTS participants (
