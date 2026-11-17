@@ -110,8 +110,18 @@ def admin():
    token=secrets.token_urlsafe(32)
    c.execute('INSERT INTO participants(token_hash) VALUES (?)',(digest(token),));c.commit()
    created=request.url_root.rstrip('/')+url_for('participant',token=token)
+  if request.method=='POST' and request.form.get('action')=='delete':
+   if now()>=REVEAL:abort(403,'После жеребьёвки удаление закрыто')
+   try: player_id=int(request.form.get('player_id',''))
+   except ValueError:abort(400)
+   c.execute('SELECT pg_advisory_xact_lock(20261129)')
+   player=c.execute('SELECT id FROM participants WHERE id=?',(player_id,)).fetchone()
+   if not player:abort(404)
+   c.execute('DELETE FROM participants WHERE id=?',(player_id,))
+   c.commit()
+   return redirect('/admin')
   players=c.execute('SELECT id,name,registered FROM participants ORDER BY id').fetchall()
- return page('''<h1>Кабинет организатора</h1><p>Создайте персональную ссылку и отправьте её одному участнику. Ссылка показывается только один раз — сохраните её перед закрытием страницы.</p>{% if created %}<div class="card"><h2>Новая секретная ссылка</h2><div class="link">{{ created }}</div><p class="muted">Скопируйте её сейчас: в базе хранится только хеш токена.</p></div>{% endif %}<div class="grid"><div class="card"><div class="stat">{{ registered }}/10</div><div class="muted">заполнили анкету</div></div><div class="card"><div class="stat">{{ players|length }}/10</div><div class="muted">создано приглашений</div></div></div><div class="card"><form method="post"><input type="hidden" name="action" value="invite"><button {% if players|length>=10 or revealed %}disabled{% endif %}>+ Создать личную ссылку</button></form><h2>Список участников</h2>{% for p in players %}<p>№{{ p['id'] }} · {{ p['name'] if p['registered'] else 'Ожидает анкету' }} · {{ '✓' if p['registered'] else '○' }}</p>{% endfor %}</div><p class="muted">Организатор не видит пары через интерфейс. Для сильной гарантии от администратора сервера нужна отдельная криптографическая архитектура.</p>''',created=created,players=players,registered=sum(x['registered'] for x in players),revealed=now()>=REVEAL)
+ return page('''<h1>Кабинет организатора</h1><p>Создайте персональную ссылку и отправьте её одному участнику. Ссылка показывается только один раз — сохраните её перед закрытием страницы.</p>{% if created %}<div class="card"><h2>Новая секретная ссылка</h2><div class="link">{{ created }}</div><p class="muted">Скопируйте её сейчас: в базе хранится только хеш токена.</p></div>{% endif %}<div class="grid"><div class="card"><div class="stat">{{ registered }}/10</div><div class="muted">заполнили анкету</div></div><div class="card"><div class="stat">{{ players|length }}/10</div><div class="muted">создано приглашений</div></div></div><div class="card"><form method="post"><input type="hidden" name="action" value="invite"><button {% if players|length>=10 or revealed %}disabled{% endif %}>+ Создать личную ссылку</button></form><h2>Список участников</h2>{% for p in players %}<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><p>№{{ p['id'] }} · {{ p['name'] if p['registered'] else 'Ожидает анкету' }} · {{ '✓' if p['registered'] else '○' }}</p>{% if not revealed %}<form method="post" onsubmit="return confirm('Удалить анкету и аннулировать личную ссылку?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="player_id" value="{{ p['id'] }}"><button type="submit" style="background:#a85b55;color:white">Удалить</button></form>{% endif %}</div>{% endfor %}</div><p class="muted">Организатор не видит пары через интерфейс. Для сильной гарантии от администратора сервера нужна отдельная криптографическая архитектура.</p>''',created=created,players=players,registered=sum(x['registered'] for x in players),revealed=now()>=REVEAL)
 
 if __name__=='__main__':
  if not ADMIN_PASSWORD:raise SystemExit('Укажите ADMIN_PASSWORD перед запуском')
