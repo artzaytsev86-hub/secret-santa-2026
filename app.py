@@ -102,6 +102,7 @@ def admin():
   return page('<h2>Неверный пароль</h2><a href="/admin">Попробовать снова</a>'),403
  if not admin_ok():return page('''<h1>Вход организатора</h1><div class="card"><form method="post"><input type="hidden" name="action" value="login"><label>Пароль</label><input type="password" name="password" required><button>Войти</button></form></div>''')
  created=None
+ test_result=None
  with db() as c:
   if request.method=='POST' and request.form.get('action')=='invite':
    if now()>=REVEAL:abort(403)
@@ -120,8 +121,32 @@ def admin():
    c.execute('DELETE FROM participants WHERE id=?',(player_id,))
    c.commit()
    return redirect('/admin')
+  if request.method=='POST' and request.form.get('action')=='rotate':
+   if now()>=REVEAL:abort(403,'После жеребьёвки ссылки менять нельзя')
+   try: player_id=int(request.form.get('player_id',''))
+   except ValueError:abort(400)
+   c.execute('SELECT pg_advisory_xact_lock(20261129)')
+   player=c.execute('SELECT id FROM participants WHERE id=?',(player_id,)).fetchone()
+   if not player:abort(404)
+   token=secrets.token_urlsafe(32)
+   c.execute('UPDATE participants SET token_hash=? WHERE id=?',(digest(token),player_id))
+   c.commit()
+   created=request.url_root.rstrip('/')+url_for('participant',token=token)
+  if request.method=='POST' and request.form.get('action')=='test_draw':
+   if now()>=REVEAL:abort(403,'Тестирование закрыто после жеребьёвки')
+   rows=c.execute('SELECT id FROM participants WHERE registered=1 ORDER BY id').fetchall()
+   if len(rows)<2:
+    test_result='Для проверки нужны минимум две заполненные анкеты. Сейчас: '+str(len(rows))+'.'
+   else:
+    ids=[row['id'] for row in rows]
+    receivers=ids[:]
+    for i in range(len(receivers)-1,0,-1):
+     j=secrets.randbelow(i)
+     receivers[i],receivers[j]=receivers[j],receivers[i]
+    valid=(len(set(receivers))==len(ids) and all(a!=b for a,b in zip(ids,receivers)))
+    test_result=('Проверка успешна: ' if valid else 'Ошибка проверки: ')+str(len(ids))+' участников; каждому назначен уникальный получатель, совпадений с собой нет. Настоящие пары не созданы и не сохранены.' if valid else 'Проверка не пройдена. Настоящие пары не изменены.'
   players=c.execute('SELECT id,name,registered FROM participants ORDER BY id').fetchall()
- return page('''<h1>Кабинет организатора</h1><p>Создайте персональную ссылку и отправьте её одному участнику. Ссылка показывается только один раз — сохраните её перед закрытием страницы.</p>{% if created %}<div class="card"><h2>Новая секретная ссылка</h2><div class="link">{{ created }}</div><p class="muted">Скопируйте её сейчас: в базе хранится только хеш токена.</p></div>{% endif %}<div class="grid"><div class="card"><div class="stat">{{ registered }}/10</div><div class="muted">заполнили анкету</div></div><div class="card"><div class="stat">{{ players|length }}/10</div><div class="muted">создано приглашений</div></div></div><div class="card"><form method="post"><input type="hidden" name="action" value="invite"><button {% if players|length>=10 or revealed %}disabled{% endif %}>+ Создать личную ссылку</button></form><h2>Список участников</h2>{% for p in players %}<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><p>№{{ p['id'] }} · {{ p['name'] if p['registered'] else 'Ожидает анкету' }} · {{ '✓' if p['registered'] else '○' }}</p>{% if not revealed %}<form method="post" onsubmit="return confirm('Удалить анкету и аннулировать личную ссылку?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="player_id" value="{{ p['id'] }}"><button type="submit" style="background:#a85b55;color:white">Удалить</button></form>{% endif %}</div>{% endfor %}</div><p class="muted">Организатор не видит пары через интерфейс. Для сильной гарантии от администратора сервера нужна отдельная криптографическая архитектура.</p>''',created=created,players=players,registered=sum(x['registered'] for x in players),revealed=now()>=REVEAL)
+ return page('''<h1>Кабинет организатора</h1><p>Создайте персональную ссылку и отправьте её одному участнику. Ссылка показывается только один раз — сохраните её перед закрытием страницы.</p>{% if test_result %}<div class="card"><h2>Пробная жеребьёвка</h2><p>{{ test_result }}</p></div>{% endif %}{% if created %}<div class="card"><h2>Новая секретная ссылка</h2><div class="link">{{ created }}</div><p class="muted">Скопируйте её сейчас: в базе хранится только хеш токена.</p></div>{% endif %}<div class="grid"><div class="card"><div class="stat">{{ registered }}/10</div><div class="muted">заполнили анкету</div></div><div class="card"><div class="stat">{{ players|length }}/10</div><div class="muted">создано приглашений</div></div></div><div class="card"><form method="post"><input type="hidden" name="action" value="invite"><button {% if players|length>=10 or revealed %}disabled{% endif %}>+ Создать личную ссылку</button></form><div class="card"><h2>Проверка жеребьёвки</h2><p class="muted">Проверка использует заполненные анкеты, но не сохраняет пары и не показывает получателей.</p><form method="post"><input type="hidden" name="action" value="test_draw"><button {% if revealed %}disabled{% endif %}>Проверить жеребьёвку</button></form></div><h2>Список участников</h2>{% for p in players %}<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><p>№{{ p['id'] }} · {{ p['name'] if p['registered'] else 'Ожидает анкету' }} · {{ '✓' if p['registered'] else '○' }}</p>{% if not revealed %}<form method="post" onsubmit="return confirm('Удалить анкету и аннулировать личную ссылку?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="player_id" value="{{ p['id'] }}"><button type="submit" style="background:#a85b55;color:white">Удалить</button></form><form method="post" onsubmit="return confirm('Старая ссылка сразу перестанет работать. Создать новую?')"><input type="hidden" name="action" value="rotate"><input type="hidden" name="player_id" value="{{ p['id'] }}"><button type="submit">Заменить ссылку</button></form>{% endif %}</div>{% endfor %}</div><p class="muted">Организатор не видит пары через интерфейс. Для сильной гарантии от администратора сервера нужна отдельная криптографическая архитектура.</p>''',created=created,test_result=test_result,players=players,registered=sum(x['registered'] for x in players),revealed=now()>=REVEAL)
 
 if __name__=='__main__':
  if not ADMIN_PASSWORD:raise SystemExit('Укажите ADMIN_PASSWORD перед запуском')
